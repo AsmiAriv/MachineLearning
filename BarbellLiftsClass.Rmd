@@ -2,7 +2,16 @@
 title: "Weight Lifting - Barbell lifts classification"
 author: "Asmi Ariv"
 date: "July 2, 2016"
-output: html_document
+output:
+  html_document:
+    fig_caption: yes
+    keep_md: yes
+    toc: yes
+  pdf_document:
+    fig_caption: yes
+    fig_crop: no
+    number_sections: yes
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
