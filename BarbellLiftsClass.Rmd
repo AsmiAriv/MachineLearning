@@ -1,0 +1,245 @@
+---
+title: "Weight Lifting - Barbell lifts classification"
+author: "Asmi Ariv"
+date: "July 2, 2016"
+output:
+  html_document:
+    fig_caption: yes
+    keep_md: yes
+    toc: yes
+  pdf_document:
+    fig_caption: yes
+    fig_crop: no
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+This paper deals with the analysis of the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The objective of this project is to come up with a predictive model using machine learning algorithm in order to predict the manner in which these particpants did the exercise.
+
+Original source of data: <http://groupware.les.inf.puc-rio.br/har>
+
+There are five classes: A, B, C, D, and E. A corresponds to the specified execution of the exercise while other classes correspond to common mistakes.
+
+After running various models, cross validation and out of sample error analysis was found to be that decision tree and random forest performed exteremely well while boosting did not perform so well. However, for testing datasets (with 20 cases), random forest was the winner with 95% accuracy.
+
+
+##Data preparation
+Loading required packages
+```{r message=FALSE, warning=FALSE}
+require(caret)
+require(rpart)
+require(randomForest)
+require(gbm)
+library(RColorBrewer)
+require(MASS)
+require(rattle)
+```
+
+Loading the data
+```{r message=FALSE, warning=FALSE, cache=TRUE}
+training <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+sum(!is.na(intersect(colnames(training),colnames(testing)))) #To check if both training and test datasets have the same columns.
+```
+
+
+```{r}
+str(training, list.len=c(14))
+
+```
+*Here the output has been truncated for space constraints*
+
+
+The training dataset contains 19622 observations and 160 variables. The variable "classe" is the output variable with five classes: A, B, C, D and E. 
+
+Testing and training datasets have 159 identical columns which means all columns are same as the classe variable is not included in testing data.
+
+Looking at the data, we see that there are many variables with mostly NAs, and
+hence we need to exclude them as they may not be useful in our classification
+model building. Therefore, we need to develop a function that will return 
+FALSE for all the columns having more than 50% NAs and TRUE for all those columns
+which have less than 50% NAs.
+
+##Feature selection
+
+```{r cache=TRUE}
+remove <- function(x=data.frame(), t=0.5){
+  len = dim(x)[2]
+  r <- c()
+      for (i in 1:len){
+        if(mean(is.na(x[,i]))>t)r[i] = FALSE
+        else r[i] = TRUE
+
+      }
+  r
+}
+
+newdataIndex <- remove(training)
+newdata <- training[,newdataIndex]
+
+dim(training)
+dim(newdata)
+
+mean(is.na(newdata))
+```
+
+And we see that a substantial number of columns has been excluded from the 
+dataset with no missing values now.
+
+We'll also remove the first 7 variables as they aren't important for predictions:
+```{r}
+newTraining <- newdata[,-c(1:7)]
+
+dim(newTraining)
+```
+
+We need to check for the near zero varience:
+
+```{r R.options=list(max.print=10)}
+near_zero_var <- nearZeroVar(newTraining, saveMetrics=TRUE)
+
+near_zero_var
+```
+*Here the output has been truncated for space constraints*
+
+And there are no variables with non-variability.
+
+##Data slicing for cross validation
+
+Now, we split the newTraining data into test and train datasets for our model 
+building, however, in order to come up with the best model we will divide the dataset into three groups each containing a separate pair of train-test datasets.
+This will have two fold benefit: more option to try out different model
+and perform cross validation on multiple datasets.
+
+```{r}
+
+set.seed(33)
+index1 <- createDataPartition(y=newTraining$classe, p=0.33, list=F)
+data1 <- newTraining[index1,]
+heldout<- newTraining[-index1,]
+
+set.seed(33)
+index2 <- createDataPartition(y=heldout$classe, p=0.50, list=F)
+data2 <- heldout[index2,]
+data3<- heldout[-index2,]
+
+set.seed(33)
+inTrain1 <- createDataPartition(y=data1$classe, p=0.6, list=F)
+train1 <- data1[inTrain1,]
+test1<- data1[-inTrain1,]
+
+set.seed(33)
+inTrain2 <- createDataPartition(y=data2$classe, p=0.6, list=F)
+train2 <- data2[inTrain2,]
+test2<- data2[-inTrain2,]
+
+set.seed(33)
+inTrain3 <- createDataPartition(y=data3$classe, p=0.6, list=F)
+train3 <- data3[inTrain3,]
+test3<- data3[-inTrain3,]
+
+
+```
+
+#Model selection
+
+Now, let's begin with the model selection process with different permutations 
+and combinations using three pairs of train-test datasets.
+
+We will apply three models and see which one performs the best:
+
+Running the boosting model on first train set with 5000 iterative trees:
+```{r cache=TRUE}
+set.seed(11)
+boostFit1 <- gbm(classe ~ ., data=train1, n.tree=5000,distribution="multinomial")
+```
+
+Running the decision tree with standardized data and cross validation method on second train set:
+```{r cache=TRUE}
+set.seed(11)
+dtreeFit1 <- train(train2, train2$classe,
+                 method = "rpart",
+                 preProcess = c("center", "scale"),
+                 tuneLength = 10, 
+                 trControl = trainControl(method = "cv"))
+
+print(dtreeFit1, digits=3)
+print(dtreeFit1$finalModel, digits=3)
+```
+Plotting the decision tree based on using fancyRpartPlot() function from rattle package (as described in Machine Learning Course):
+```{r}
+fancyRpartPlot(dtreeFit1$finalModel, sub="Decision Tree Plot")
+
+```
+
+Running random forest on third train set:
+```{r cache=TRUE}
+set.seed(11)
+ranforFit1 <- randomForest(classe~., data=train3)
+```
+
+
+#Cross Validation
+Now let's predict the classification for the respective test sets:
+```{r}
+predict1 <- predict(boostFit1, newdata=test1, n.trees=5000, type="response")
+pred_class <- apply(predict1, 1, which.max)
+pred_class <- factor(pred_class, labels=c("A","B","C","D","E"))
+print(confusionMatrix(pred_class, test1$classe), digits=4)
+
+predict2 <- predict(dtreeFit1, newdata=test2)
+print(confusionMatrix(predict2, test2$classe), digits=4)
+
+predict3 <- predict(ranforFit1, newdata=test2)
+print(confusionMatrix(predict3, test3$classe), digits=4)
+
+
+```
+
+
+#Conclusion
+
+After running various models, cross validation and accuracy level test it was found:
+
+* Decision tree with standardized data and cross validation method performed extremely well with accuracy of 100%
+
+* Random Forest perfomed quite well too with the accuracy level 96.7%
+
+* Boosting with 5000 iterative trees has not performed so well with only 72.5% of accuracy 
+
+
+##Model performance on Testing dataset
+
+The random forest model was used to predict the outcome of testing dataset, which showed 95% accuracy.
+
+```{r}
+testingindex <- remove(testing)
+testingnew <- testing[testingindex]
+testingnew <- testingnew[,-c(1:7)]
+predict_testing <- predict(ranforFit1, newdata=testingnew)
+```
+
+#Results
+
+The final model that was used to predict the testing dataset with 20 cases was random forest, which succesfully predicted the outcomes with 95% accuracy. Although decision tree did perform exteremely well with 100% accuracy, it performed poorely on testing data (20 cases), which is a clear sign of overfitting. No wonder, random forest is one of the best algorithms by far.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
